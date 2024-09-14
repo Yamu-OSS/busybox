@@ -6,7 +6,7 @@ COPY . .
 
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apk/repositories
 RUN apk update && \
-    apk add make build-base ncurses-dev
+    apk add make build-base ncurses-dev linux-headers
 
 RUN make defconfig && \
     make menuconfig && \
