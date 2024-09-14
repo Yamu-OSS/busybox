@@ -104,6 +104,7 @@
 # define MAXLINES       256  /* max lines in non-root crontabs */
 #endif
 
+#define ROOT_MODE() (getuid() == 0 || geteuid() == 0)
 
 typedef struct CronFile {
 	struct CronFile *cf_next;
@@ -416,6 +417,7 @@ static void load_crontab(const char *fileName)
 {
 	struct parser_t *parser;
 	struct stat sbuf;
+	struct passwd *pas;
 	int maxLines;
 	char *tokens[6];
 #if ENABLE_FEATURE_CROND_CALL_SENDMAIL
@@ -426,7 +428,8 @@ static void load_crontab(const char *fileName)
 
 	delete_cronfile(fileName);
 
-	if (!getpwnam(fileName)) {
+	pas = getpwnam(fileName);
+	if (!pas) {
 		log7("ignoring file '%s' (no such user)", fileName);
 		return;
 	}
@@ -437,7 +440,15 @@ static void load_crontab(const char *fileName)
 
 	maxLines = (strcmp(fileName, "root") == 0) ? 65535 : MAXLINES;
 
-	if (fstat(fileno(parser->fp), &sbuf) == 0 && sbuf.st_uid == DAEMON_UID) {
+	if (fstat(fileno(parser->fp), &sbuf)) {
+		log7("ignoring file '%s' (stat error)", fileName);
+		config_close(parser);
+		return;
+	}
+
+	if ((ROOT_MODE() && sbuf.st_uid == DAEMON_UID) || 
+		(!ROOT_MODE() && sbuf.st_uid == geteuid() && 
+			sbuf.st_uid == pas -> pw_uid)) {
 		CronFile *file = xzalloc(sizeof(CronFile));
 		CronLine **pline;
 		int n;
@@ -683,7 +694,15 @@ static void set_env_vars(struct passwd *pas, const char *shell, const char *path
 static void change_user(struct passwd *pas)
 {
 	/* careful: we're after vfork! */
-	change_identity(pas); /* - initgroups, setgid, setuid */
+	if (ROOT_MODE()) {
+		change_identity(pas); /* - initgroups, setgid, setuid */
+	} else if (geteuid() != pas -> pw_uid) {
+		/* we can't run as another user permission in case of non-root user */
+		bb_error_msg("can't run as another uid '%ld' by '%ld'", 
+			(long) pas->pw_uid, (long) geteuid());
+		return;
+	}
+	
 	if (chdir_or_warn(pas->pw_dir) != 0) {
 		xchdir(CRON_DIR);
 	}
